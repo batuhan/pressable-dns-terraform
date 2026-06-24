@@ -1,0 +1,120 @@
+# Terraform Provider for Pressable
+
+Terraform provider for the public Pressable API.
+
+The provider has two layers:
+
+- Typed resources/data sources for durable objects: sites, DNS records, site domains, site settings, zones, and site lists.
+- Generic API primitives for complete day-one coverage of the public API: `pressable_api_request` and `pressable_api_action`.
+
+Use typed resources wherever possible. Use the generic primitives for public endpoints that are operational, read-only, or not yet worth a dedicated Terraform abstraction.
+
+## Provider Address
+
+```hcl
+terraform {
+  required_providers {
+    pressable = {
+      source  = "batuhan/pressable"
+      version = "~> 0.1"
+    }
+  }
+}
+```
+
+The GitHub repository must be named `terraform-provider-pressable` for Terraform Registry publishing.
+
+## Authentication
+
+Use either a bearer token:
+
+```hcl
+provider "pressable" {
+  access_token = var.pressable_access_token
+}
+```
+
+or a Pressable API application:
+
+```hcl
+provider "pressable" {
+  client_id     = var.pressable_client_id
+  client_secret = var.pressable_client_secret
+}
+```
+
+Environment variables are also supported:
+
+- `PRESSABLE_BASE_URL`
+- `PRESSABLE_ACCESS_TOKEN`
+- `PRESSABLE_CLIENT_ID`
+- `PRESSABLE_CLIENT_SECRET`
+
+## Resources
+
+- `pressable_site`
+- `pressable_dns_record`
+- `pressable_site_domain`
+- `pressable_site_setting`
+- `pressable_api_action`
+
+## Data Sources
+
+- `pressable_api_request`
+- `pressable_sites`
+- `pressable_zones`
+- `pressable_zone_records`
+
+## Public API Coverage
+
+Typed resources intentionally cover durable state. The generic primitives cover every public API path exposed by Pressable:
+
+```hcl
+data "pressable_api_request" "php_versions" {
+  path = "/v1/sites/php-versions"
+}
+
+resource "pressable_api_action" "purge_cache" {
+  method = "DELETE"
+  path   = "/v1/sites/${pressable_site.main.id}/cache"
+
+  triggers_json = jsonencode({
+    version = var.deploy_version
+  })
+}
+```
+
+## Local Development
+
+```sh
+make test
+make install
+```
+
+Then use:
+
+```hcl
+terraform {
+  required_providers {
+    pressable = {
+      source = "batuhan/pressable"
+    }
+  }
+}
+```
+
+For a development override, add a Terraform CLI config:
+
+```hcl
+provider_installation {
+  dev_overrides {
+    "batuhan/pressable" = "/Users/batuhan/Projects/terraform-provider-pressable/bin"
+  }
+  direct {}
+}
+```
+
+## Release
+
+Registry releases are built with GoReleaser. Set `GPG_FINGERPRINT`, create a signed GitHub release, and publish through the Terraform Registry UI after the repository is public.
+
