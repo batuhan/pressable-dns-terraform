@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -13,6 +14,7 @@ import (
 
 var _ resource.Resource = &siteResource{}
 var _ resource.ResourceWithConfigure = &siteResource{}
+var _ resource.ResourceWithImportState = &siteResource{}
 
 func NewSiteResource() resource.Resource { return &siteResource{} }
 
@@ -32,6 +34,8 @@ type siteResourceModel struct {
 	MultisiteSupport  types.Bool   `tfsdk:"multisite_support"`
 	WPEnvironmentType types.String `tfsdk:"wp_environment_type"`
 	ForceDelete       types.Bool   `tfsdk:"force_delete"`
+	AllowCreate       types.Bool   `tfsdk:"allow_create"`
+	DeleteOnDestroy   types.Bool   `tfsdk:"delete_on_destroy"`
 	DataJSON          types.String `tfsdk:"data_json"`
 }
 
@@ -41,11 +45,11 @@ func (r *siteResource) Metadata(_ context.Context, _ resource.MetadataRequest, r
 
 func (r *siteResource) Schema(_ context.Context, _ resource.SchemaRequest, resp *resource.SchemaResponse) {
 	resp.Schema = schema.Schema{
-		MarkdownDescription: "Manages a Pressable site.",
+		MarkdownDescription: "Adopts and manages an existing Pressable site. Site creation is disabled by default; set `allow_create = true` only when Terraform should create a new Pressable site.",
 		Attributes: map[string]schema.Attribute{
 			"id":                  schema.StringAttribute{Computed: true},
-			"name":                schema.StringAttribute{Required: true},
-			"php_version":         schema.StringAttribute{Optional: true},
+			"name":                schema.StringAttribute{Optional: true, Computed: true},
+			"php_version":         schema.StringAttribute{Optional: true, Computed: true},
 			"install":             schema.StringAttribute{Optional: true},
 			"sandbox":             schema.BoolAttribute{Optional: true},
 			"staging":             schema.BoolAttribute{Optional: true},
@@ -53,9 +57,11 @@ func (r *siteResource) Schema(_ context.Context, _ resource.SchemaRequest, resp 
 			"datacenter_code":     schema.StringAttribute{Optional: true},
 			"wp_admin_username":   schema.StringAttribute{Optional: true},
 			"wp_admin_email":      schema.StringAttribute{Optional: true},
-			"multisite_support":   schema.BoolAttribute{Optional: true},
-			"wp_environment_type": schema.StringAttribute{Optional: true},
-			"force_delete":        schema.BoolAttribute{Optional: true},
+			"multisite_support":   schema.BoolAttribute{Optional: true, Computed: true},
+			"wp_environment_type": schema.StringAttribute{Optional: true, Computed: true},
+			"force_delete":        schema.BoolAttribute{Optional: true, MarkdownDescription: "Passes `force=true` when `delete_on_destroy` is enabled."},
+			"allow_create":        schema.BoolAttribute{Optional: true, MarkdownDescription: "Explicit opt-in for creating new Pressable sites. Defaults to false."},
+			"delete_on_destroy":   schema.BoolAttribute{Optional: true, MarkdownDescription: "Explicit opt-in for deleting the remote Pressable site on Terraform destroy. Defaults to false so imported sites are only removed from state."},
 			"data_json":           schema.StringAttribute{Computed: true},
 		},
 	}
@@ -77,6 +83,17 @@ func (r *siteResource) Create(ctx context.Context, req resource.CreateRequest, r
 	var plan siteResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if plan.AllowCreate.IsNull() || plan.AllowCreate.IsUnknown() || !plan.AllowCreate.ValueBool() {
+		resp.Diagnostics.AddError(
+			"Site creation disabled",
+			"pressable_site is intended for existing sites. Import the site with `terraform import pressable_site.example <site_id>`, or set allow_create = true to create a new Pressable site.",
+		)
+		return
+	}
+	if plan.Name.IsNull() || plan.Name.IsUnknown() || plan.Name.ValueString() == "" {
+		resp.Diagnostics.AddAttributeError(path.Root("name"), "Missing site name", "name is required when allow_create is true.")
 		return
 	}
 	body := compactMap(map[string]any{
@@ -119,6 +136,7 @@ func (r *siteResource) Read(ctx context.Context, req resource.ReadRequest, resp 
 		return
 	}
 	state.DataJSON = types.StringValue(pressable.RawString(envelope.Data))
+	hydrateSiteStateFromData(envelope.Data, &state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -126,6 +144,10 @@ func (r *siteResource) Update(ctx context.Context, req resource.UpdateRequest, r
 	var plan siteResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if plan.Name.IsNull() || plan.Name.IsUnknown() || plan.Name.ValueString() == "" {
+		resp.Diagnostics.AddAttributeError(path.Root("name"), "Missing site name", "name is required when updating a site.")
 		return
 	}
 	body := compactMap(map[string]any{
@@ -148,6 +170,10 @@ func (r *siteResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 	if resp.Diagnostics.HasError() {
 		return
 	}
+	if state.DeleteOnDestroy.IsNull() || state.DeleteOnDestroy.IsUnknown() || !state.DeleteOnDestroy.ValueBool() {
+		resp.State.RemoveResource(ctx)
+		return
+	}
 	path := "/v1/sites/" + state.ID.ValueString()
 	if !state.ForceDelete.IsNull() && !state.ForceDelete.IsUnknown() && state.ForceDelete.ValueBool() {
 		path += "?force=true"
@@ -158,4 +184,8 @@ func (r *siteResource) Delete(ctx context.Context, req resource.DeleteRequest, r
 		return
 	}
 	resp.State.RemoveResource(ctx)
+}
+
+func (r *siteResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	resource.ImportStatePassthroughID(ctx, path.Root("id"), req, resp)
 }

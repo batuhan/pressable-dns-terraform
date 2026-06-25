@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -14,6 +16,7 @@ import (
 
 var _ resource.Resource = &siteSettingResource{}
 var _ resource.ResourceWithConfigure = &siteSettingResource{}
+var _ resource.ResourceWithImportState = &siteSettingResource{}
 
 func NewSiteSettingResource() resource.Resource { return &siteSettingResource{} }
 
@@ -158,4 +161,20 @@ func settingDeleteSupported(setting string) bool {
 	default:
 		return false
 	}
+}
+
+func (r *siteSettingResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	parts, err := splitImportID(req.ID, 2, "site_id/setting")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import id", err.Error())
+		return
+	}
+	siteID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("site_id"), "Invalid site_id", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("site_id"), siteID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("setting"), parts[1])...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), stableID(parts[0], parts[1]))...)
 }

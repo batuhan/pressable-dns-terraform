@@ -18,6 +18,12 @@ Applies durable site settings such as:
 - `wordpress-mcp`
 - `woo-cart-cache`
 
+Import format:
+
+```sh
+terraform import pressable_site_setting.maintenance <site_id>/maintenance-mode
+```
+
 ## Example Usage
 
 ```terraform
@@ -30,4 +36,3 @@ resource "pressable_site_setting" "maintenance" {
   })
 }
 ```
-

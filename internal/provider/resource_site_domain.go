@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -14,6 +16,7 @@ import (
 
 var _ resource.Resource = &siteDomainResource{}
 var _ resource.ResourceWithConfigure = &siteDomainResource{}
+var _ resource.ResourceWithImportState = &siteDomainResource{}
 
 func NewSiteDomainResource() resource.Resource { return &siteDomainResource{} }
 
@@ -37,8 +40,8 @@ func (r *siteDomainResource) Schema(_ context.Context, _ resource.SchemaRequest,
 		Attributes: map[string]schema.Attribute{
 			"id":        schema.StringAttribute{Computed: true},
 			"site_id":   schema.Int64Attribute{Required: true},
-			"name":      schema.StringAttribute{Required: true},
-			"primary":   schema.BoolAttribute{Optional: true},
+			"name":      schema.StringAttribute{Optional: true, Computed: true},
+			"primary":   schema.BoolAttribute{Optional: true, Computed: true},
 			"data_json": schema.StringAttribute{Computed: true},
 		},
 	}
@@ -60,6 +63,10 @@ func (r *siteDomainResource) Create(ctx context.Context, req resource.CreateRequ
 	var plan siteDomainResourceModel
 	resp.Diagnostics.Append(req.Plan.Get(ctx, &plan)...)
 	if resp.Diagnostics.HasError() {
+		return
+	}
+	if plan.Name.IsNull() || plan.Name.IsUnknown() || plan.Name.ValueString() == "" {
+		resp.Diagnostics.AddAttributeError(path.Root("name"), "Missing domain name", "name is required when attaching a site domain.")
 		return
 	}
 	envelope, _, err := r.client.Request(ctx, http.MethodPost, fmt.Sprintf("/v1/sites/%d/domains", plan.SiteID.ValueInt64()), map[string]any{
@@ -97,6 +104,7 @@ func (r *siteDomainResource) Read(ctx context.Context, req resource.ReadRequest,
 		return
 	}
 	state.DataJSON = types.StringValue(pressable.RawString(envelope.Data))
+	hydrateDomainStateFromData(envelope.Data, &state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -132,4 +140,19 @@ func (r *siteDomainResource) Delete(ctx context.Context, req resource.DeleteRequ
 func (r *siteDomainResource) setPrimary(ctx context.Context, siteID int64, domainID string) error {
 	_, _, err := r.client.Request(ctx, http.MethodPut, fmt.Sprintf("/v1/sites/%d/domains/%s/primary", siteID, domainID), nil)
 	return err
+}
+
+func (r *siteDomainResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	parts, err := splitImportID(req.ID, 2, "site_id/domain_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import id", err.Error())
+		return
+	}
+	siteID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("site_id"), "Invalid site_id", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("site_id"), siteID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
 }

@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 
+	"github.com/hashicorp/terraform-plugin-framework/path"
 	"github.com/hashicorp/terraform-plugin-framework/resource"
 	"github.com/hashicorp/terraform-plugin-framework/resource/schema"
 	"github.com/hashicorp/terraform-plugin-framework/types"
@@ -15,6 +17,7 @@ import (
 
 var _ resource.Resource = &dnsRecordResource{}
 var _ resource.ResourceWithConfigure = &dnsRecordResource{}
+var _ resource.ResourceWithImportState = &dnsRecordResource{}
 
 func NewDNSRecordResource() resource.Resource { return &dnsRecordResource{} }
 
@@ -44,13 +47,13 @@ func (r *dnsRecordResource) Schema(_ context.Context, _ resource.SchemaRequest, 
 		Attributes: map[string]schema.Attribute{
 			"id":        schema.StringAttribute{Computed: true},
 			"zone_id":   schema.Int64Attribute{Required: true},
-			"type":      schema.StringAttribute{Required: true},
-			"name":      schema.StringAttribute{Required: true},
-			"value":     schema.StringAttribute{Required: true},
-			"priority":  schema.Int64Attribute{Optional: true},
-			"weight":    schema.Int64Attribute{Optional: true},
-			"port":      schema.Int64Attribute{Optional: true},
-			"ttl":       schema.Int64Attribute{Optional: true},
+			"type":      schema.StringAttribute{Optional: true, Computed: true},
+			"name":      schema.StringAttribute{Optional: true, Computed: true},
+			"value":     schema.StringAttribute{Optional: true, Computed: true},
+			"priority":  schema.Int64Attribute{Optional: true, Computed: true},
+			"weight":    schema.Int64Attribute{Optional: true, Computed: true},
+			"port":      schema.Int64Attribute{Optional: true, Computed: true},
+			"ttl":       schema.Int64Attribute{Optional: true, Computed: true},
 			"site_id":   schema.Int64Attribute{Optional: true},
 			"data_json": schema.StringAttribute{Computed: true},
 		},
@@ -94,6 +97,7 @@ func (r *dnsRecordResource) Read(ctx context.Context, req resource.ReadRequest, 
 		return
 	}
 	state.DataJSON = types.StringValue(pressable.RawString(envelope.Data))
+	hydrateRecordStateFromData(envelope.Data, &state)
 	resp.Diagnostics.Append(resp.State.Set(ctx, &state)...)
 }
 
@@ -134,6 +138,15 @@ func (r *dnsRecordResource) Delete(ctx context.Context, req resource.DeleteReque
 }
 
 func (r *dnsRecordResource) create(ctx context.Context, plan *dnsRecordResourceModel) error {
+	if plan.Type.IsNull() || plan.Type.IsUnknown() || plan.Type.ValueString() == "" {
+		return fmt.Errorf("type is required when creating a DNS record")
+	}
+	if plan.Name.IsNull() || plan.Name.IsUnknown() || plan.Name.ValueString() == "" {
+		return fmt.Errorf("name is required when creating a DNS record")
+	}
+	if plan.Value.IsNull() || plan.Value.IsUnknown() || plan.Value.ValueString() == "" {
+		return fmt.Errorf("value is required when creating a DNS record")
+	}
 	body := compactMap(map[string]any{
 		"type":     plan.Type.ValueString(),
 		"name":     plan.Name.ValueString(),
@@ -177,4 +190,19 @@ func recordIDFromZoneResponse(raw json.RawMessage, plan *dnsRecordResourceModel)
 		}
 	}
 	return "", fmt.Errorf("created DNS record was not present in zone response")
+}
+
+func (r *dnsRecordResource) ImportState(ctx context.Context, req resource.ImportStateRequest, resp *resource.ImportStateResponse) {
+	parts, err := splitImportID(req.ID, 2, "zone_id/record_id")
+	if err != nil {
+		resp.Diagnostics.AddError("Invalid import id", err.Error())
+		return
+	}
+	zoneID, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
+		resp.Diagnostics.AddAttributeError(path.Root("zone_id"), "Invalid zone_id", err.Error())
+		return
+	}
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("zone_id"), zoneID)...)
+	resp.Diagnostics.Append(resp.State.SetAttribute(ctx, path.Root("id"), parts[1])...)
 }
