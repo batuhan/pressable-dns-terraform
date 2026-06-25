@@ -138,4 +138,19 @@ provider_installation {
 
 ## Release
 
-Registry releases are built with GoReleaser. Set `GPG_FINGERPRINT`, create a signed GitHub release, and publish through the Terraform Registry UI after the repository is public.
+Registry releases are built with GoReleaser from `v*` tags. Configure these
+GitHub Actions secrets first:
+
+- `GPG_PRIVATE_KEY`
+- `GPG_PASSPHRASE`
+- `GPG_FINGERPRINT`
+
+Then tag and push:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+After the signed GitHub release exists, publish `batuhan/pressable` through the
+Terraform Registry UI.
